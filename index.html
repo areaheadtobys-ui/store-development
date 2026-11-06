@@ -373,6 +373,15 @@ td.r,th.r{text-align:right}
 .slotrow{display:grid;grid-template-columns:minmax(0,1.4fr) 110px 110px auto;gap:8px;align-items:end}
 @media (max-width:560px){.slotrow{grid-template-columns:1fr 1fr}.slotrow .field:first-child{grid-column:1/-1}}
 html,body{height:100%}
+/* modal: centred, never taller than the screen, body scrolls inside */
+.modal{overflow:hidden;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) max(16px,env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.modal-box{max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);min-width:0;min-height:0;overflow:hidden}
+.modal-h,.modal-f{flex:none}
+.modal-b{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+.modal-b .fgrid>*,.modal-b .field{min-width:0}
+.seg{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media (max-width:520px){.seg{grid-template-columns:1fr}}
+body.modal-open{overflow:hidden}
 
 </style>
 </head>
@@ -1516,10 +1525,10 @@ function openFile(id){const f=S.ofiles.find(x=>x.id===id);if(!f)return;if(f.url)
 let mdHandler=null;
 function openModal(title,body,onOk,okLabel="Confirm",wide=false){
   $("#md-title").textContent=title;$("#md-body").innerHTML=body;$("#md-err").textContent="";$("#md-ok").textContent=okLabel;$("#md-ok").disabled=false;
-  $("#md-box").classList.toggle("wide",wide);$("#md-form .modal-f").hidden=!onOk;$("#modal").hidden=false;$("#md-scrim").hidden=false;mdHandler=onOk;
+  $("#md-box").classList.toggle("wide",wide);$("#md-form .modal-f").hidden=!onOk;$("#modal").hidden=false;$("#md-scrim").hidden=false;document.body.classList.add("modal-open");$("#md-body").scrollTop=0;mdHandler=onOk;
   setTimeout(()=>{const f=$("#md-body input:not([type=hidden]):not([type=checkbox]),#md-body select,#md-body textarea");f&&f.focus()},30);
 }
-function closeModal(){$("#modal").hidden=true;$("#md-scrim").hidden=true;mdHandler=null}
+function closeModal(){document.body.classList.remove("modal-open");$("#modal").hidden=true;$("#md-scrim").hidden=true;mdHandler=null}
 async function runModal(){if(!mdHandler)return;const b=$("#md-ok");const lbl=b.textContent;b.disabled=true;$("#md-err").textContent="";
   try{const r=await mdHandler();if(r!==false)closeModal()}catch(x){console.warn(x);$("#md-err").textContent=x.code&&!/busy|slot/.test(x.code)?authMsg(x):(x.message||"Something went wrong.")}finally{b.disabled=false;b.textContent=lbl}}
 const remarksField=(req,ph="")=>`<div class="field"><label class="${req?"req":""}" for="md-rem">Remarks</label><textarea id="md-rem" placeholder="${esc(ph)}"></textarea></div>`;
