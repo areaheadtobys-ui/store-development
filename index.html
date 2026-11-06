@@ -382,6 +382,8 @@ html,body{height:100%}
 .seg{grid-template-columns:repeat(3,minmax(0,1fr))}
 @media (max-width:520px){.seg{grid-template-columns:1fr}}
 body.modal-open{overflow:hidden}
+.trk .st>div{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0}
+@media (max-width:640px){.trk .st>div{align-items:flex-start}}
 
 </style>
 </head>
@@ -585,6 +587,13 @@ window.SD_CONFIG = {
       </div>
     </div>
     <div id="st-team" class="stack" hidden>
+      <div class="card">
+        <div class="card-h"><div><h2>Add several team accounts</h2><div class="sub">One person per line: name and position, email, role (SD Admin, Area Supervisor or Management), areas for supervisors (e.g. North or Central/South)</div></div></div>
+        <div class="card-b stack" style="gap:10px">
+          <textarea id="tm-bulk" placeholder="Ana Cruz - SD Coordinator, ana.cruz@tobys.com, SD Admin&#10;Juan Reyes - Area Head, juan.reyes@tobys.com, Area Supervisor, North"></textarea>
+          <div class="row"><button class="btn primary" data-act="team-bulk">Create accounts</button><span class="err" id="tm-bulk-err"></span></div>
+        </div>
+      </div>
       <div class="card">
         <div class="card-h"><div><h2>Add team account</h2><div class="sub">Store Development admins, area supervisors and management sign in with email and password</div></div></div>
         <div class="card-b">
@@ -1651,6 +1660,13 @@ function pinModal(list){
   $("#pin-xlsx").onclick=()=>exportXlsx([["Store PINs",[["Store code","Store","PIN","Website"],...list.map(r=>[r.code,S.stores[r.code]?.name||"",r.pin,location.href.split("#")[0]])]]],`Store-PINs-${today()}.xlsx`).catch(e=>toast(e.message));
   $("#pin-copy").onclick=()=>{const tx=list.map(r=>`${r.code}\t${S.stores[r.code]?.name||""}\t${r.pin}`).join("\n");navigator.clipboard?.writeText(tx).then(()=>toast("Copied"),()=>toast("Copy failed. Select the table instead."))};
 }
+function teamPwModal(list){
+  const site=location.href.split("#")[0];
+  openModal("Team sign-in details",`<p style="margin:0">Send each person the website link, their email and temporary password. Passwords are shown only now, so download or copy them before closing.</p><div class="tbl-wrap"><table class="tbl static"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Temporary password</th><th>Result</th></tr></thead><tbody>${list.map(r=>`<tr><td>${esc(r.label)}</td><td>${esc(r.email)}</td><td>${esc(ROLES[r.role])}${r.areas.length?" · "+esc(r.areas.join(", ")):""}</td><td class="mono"><b>${esc(r.pw||"—")}</b></td><td>${esc(r.note)}</td></tr>`).join("")}</tbody></table></div><div class="row"><button type="button" class="btn sm" id="tp-xlsx">Download Excel</button><button type="button" class="btn sm" id="tp-copy">Copy list</button></div>`,async()=>{},"Done",true);
+  $("#md-cancel").hidden=true;
+  $("#tp-xlsx").onclick=()=>exportXlsx([["Team accounts",[["Name","Email","Role","Areas","Temporary password","Website","Result"],...list.map(r=>[r.label,r.email,ROLES[r.role],r.areas.join(", "),r.pw,site,r.note])]]],`Team-Accounts-${today()}.xlsx`).catch(e=>toast(e.message));
+  $("#tp-copy").onclick=()=>{const tx=list.filter(r=>r.pw).map(r=>`${r.label}\t${r.email}\t${r.pw}`).join("\n");navigator.clipboard?.writeText(tx).then(()=>toast("Copied"),()=>toast("Copy failed. Select the table instead."))};
+}
 function storeAction(k,code){const s=S.stores[code];if(!s)return;
   if(k==="login"){const prev=S.logins[code];return openModal(prev?`Reset PIN · ${code}`:`Create login · ${code}`,`<p style="margin:0">${prev?"The current PIN stops working right away and a new one is created.":"Creates a login so this store can apply for tickets."}</p>`,async()=>{const pin=await makeStoreLogin(code);setTimeout(()=>pinModal([{code,pin}]),60)},prev?"Reset PIN":"Create login")}
   if(k==="del"){const n=Object.values(S.tickets).filter(t=>t.storeCode===code).length;return openModal(`Remove ${s.code}?`,`<p style="margin:0">${n?`This store has ${n} ticket${n>1?"s":""}. Those records stay in history and reports.`:"The store has no tickets."} Its login stops working.</p>`,async()=>{const l=S.logins[code];if(l&&l.uid)try{await S.B.update("users/"+l.uid,{active:false,role:""})}catch(e){}if(l)await S.B.del("storeLogins/"+code);await S.B.del("stores/"+code)},"Remove store")}
@@ -1710,6 +1726,22 @@ function bindStatic(){
     if(act==="stores-add")return addStores();
     if(act==="logins-bulk"){const miss=storeList().filter(s=>!S.logins[s.code]);if(!miss.length)return toast("Every store already has a login.");
       return openModal("Create store logins",`<p style="margin:0">Creates logins and PINs for ${miss.length} store${miss.length>1?"s":""} without one: ${esc(miss.map(s=>s.code).join(", "))}.</p>`,async()=>{const out=[];for(const s of miss){$("#md-ok").textContent=`Creating ${out.length+1} of ${miss.length}…`;try{out.push({code:s.code,pin:await makeStoreLogin(s.code)})}catch(x){if(out.length)setTimeout(()=>pinModal(out),60);throw new Error(`Stopped at ${s.code}: ${authMsg(x)}`)}}setTimeout(()=>pinModal(out),60)},"Create logins")}
+    if(act==="team-bulk"){const er=$("#tm-bulk-err");er.textContent="";const lines=$("#tm-bulk").value.split(/\n/).map(l=>l.trim()).filter(Boolean);
+      if(!lines.length)return er.textContent="Paste at least one person.";
+      const rows=[];for(const [i,l] of lines.entries()){const c=l.split(/\t|,/).map(x=>x.trim());if(c.length<3)return er.textContent=`Line ${i+1} needs a name, an email and a role.`;
+        const email=c[1].toLowerCase();if(!/^\S+@\S+\.\S+$/.test(email))return er.textContent=`Line ${i+1}: "${c[1]}" isn't a valid email.`;
+        const r=c[2].toLowerCase();const role=/super/.test(r)?"supervisor":/admin|sd/.test(r)?"sdadmin":/manag/.test(r)?"management":null;if(!role)return er.textContent=`Line ${i+1}: role must be SD Admin, Area Supervisor or Management.`;
+        const ar=(c[3]||"").split(/[\/;|]| and /i).map(x=>x.trim()).filter(Boolean).map(x=>areas().find(a=>a.toLowerCase()===x.toLowerCase())||x.replace(/\b\w/g,m=>m.toUpperCase()).replace(/\B\w/g,m=>m.toLowerCase()));
+        if(role==="supervisor"&&!ar.length)return er.textContent=`Line ${i+1}: add the area(s) this supervisor covers.`;
+        rows.push({label:c[0],email,role,areas:role==="supervisor"?ar:[]})}
+      return openModal("Create team accounts",`<p style="margin:0">Creates ${rows.length} account${rows.length>1?"s":""}. Each person gets a temporary password, shown once on the next screen.</p><div class="tbl-wrap"><table class="tbl static"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Areas</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${esc(r.label)}</td><td>${esc(r.email)}</td><td>${esc(ROLES[r.role])}</td><td>${esc(r.areas.join(", ")||"All")}</td></tr>`).join("")}</tbody></table></div>`,async()=>{
+        const out=[];const known=new Set(Object.values(S.users).map(u=>(u.email||"").toLowerCase()));const owner=String(CFG.ownerEmail||"").toLowerCase();
+        for(const [i,r] of rows.entries()){$("#md-ok").textContent=`Creating ${i+1} of ${rows.length}…`;
+          if(r.email===owner){out.push({...r,pw:"",note:"System owner: already has full access"});continue}
+          if(known.has(r.email)){out.push({...r,pw:"",note:"Already has an account"});continue}
+          const pw=genPw();try{const uid=await S.B.createUser(r.email,pw);await S.B.set("users/"+uid,{role:r.role,areas:r.areas,label:r.label,email:r.email,active:true,createdAt:iso()});out.push({...r,pw,note:"Created"})}
+          catch(x){out.push({...r,pw:"",note:authMsg(x)});if(/too-many/.test(x.code||""))break}}
+        $("#tm-bulk").value="";setTimeout(()=>teamPwModal(out),60)},"Create accounts",true)}
     if(act==="team-add"){const er=$("#tm-err");er.textContent="";const label=$("#tm-label").value.trim(),email=$("#tm-email").value.trim().toLowerCase(),role=$("#tm-role").value,ar=$$("input[name=tm-ar]:checked").map(i=>i.value);
       if(!label||!/^\S+@\S+\.\S+$/.test(email))return er.textContent="Enter a name and a valid email.";if(role==="supervisor"&&!ar.length)return er.textContent="Choose the areas this supervisor covers.";
       const pw=genPw();a.disabled=true;S.B.createUser(email,pw).then(uid=>S.B.set("users/"+uid,{role,areas:role==="supervisor"?ar:[],label,email,active:true,createdAt:iso()})).then(()=>{["tm-label","tm-email"].forEach(i=>$("#"+i).value="");
