@@ -582,7 +582,7 @@ window.SD_CONFIG = {
         </div>
       </div>
       <div class="card">
-        <div class="card-h"><div><h2>Stores and logins</h2><div class="sub" id="st-store-count"></div></div><button class="btn sm" data-act="logins-bulk">Create missing logins</button></div>
+        <div class="card-h"><div><h2>Stores and logins</h2><div class="sub" id="st-store-count"></div></div><div class="row"><button class="btn sm" data-act="pins-download">Download PIN list</button><button class="btn primary sm" data-act="logins-bulk">Set up logins</button></div></div>
         <div class="tbl-wrap" id="st-store-tbl"></div>
       </div>
     </div>
@@ -692,7 +692,7 @@ const STORE_DOMAIN=CFG.storeEmailDomain||"stores.sd-ticketing.app";
 
 /* ---------- state ---------- */
 const S={B:null,uid:null,email:null,prof:null,isOwner:false,ready:false,slow:false,err:null,
-  stores:{},users:{},logins:{},personnel:{},tickets:{},schedules:{},notifs:[],load:{},sla:DEF_SLA,sched:DEF_SCHED,
+  stores:{},users:{},logins:{},pins:{},personnel:{},tickets:{},schedules:{},notifs:[],load:{},sla:DEF_SLA,sched:DEF_SCHED,
   loaded:{},tab:null,
   f:{area:"",stype:"",store:"",type:"",prio:"",status:"",from:"",to:"",sfrom:"",sto:"",pid:"",q:"",stage:"",card:""},
   tf:{q:"",status:"",area:"",store:"",type:"",prio:"",from:"",to:"",sfrom:"",sto:"",pid:""},
@@ -968,6 +968,7 @@ function startSubs(){
     watch("notifs",{col:"notifications",where:[["aud","array-contains","sd"]],limit:150},d=>{S.notifs=d});
     watch("users",{col:"users"},d=>{S.users=byId(d)});
     watch("logins",{col:"storeLogins"},d=>{S.logins=byId(d,"code")});
+    S.subs.push(S.B.watch({col:"storePins"},d=>{S.pins=byId(d,"code");render()},()=>{}));
   }
 }
 async function init(){
@@ -1419,7 +1420,7 @@ function renderSettings(){
   tabs.forEach(([k])=>$("#st-"+k).hidden=S.st!==k);
   const sts=storeList();
   $("#st-store-count").textContent=`${sts.length} stores · ${areas().map(a=>`${a} ${sts.filter(s=>s.area===a).length}`).join(" · ")}`;
-  $("#st-store-tbl").innerHTML=sts.length?`<table class="tbl static"><thead><tr><th>Code</th><th>Store</th><th>Area</th><th>Type</th><th>Brand</th><th>Login</th><th class="r">Open tickets</th><th></th></tr></thead><tbody>${sts.map(s=>{const l=S.logins[s.code];return `<tr><td class="mono">${esc(s.code)}</td><td>${esc(s.name)}</td><td>${esc(s.area)}</td><td>${esc(s.type)}</td><td>${esc(s.brand||"")}</td><td>${l?`<span class="pill c-green">Active</span>`:`<span class="pill c-gray">Not set up</span>`}</td><td class="r num">${Object.values(S.tickets).filter(t=>t.storeCode===s.code&&!CLOSED.has(t.status)).length}</td><td class="r" style="white-space:nowrap"><button class="btn sm" data-stact="login" data-code="${esc(s.code)}">${l?"Reset PIN":"Create login"}</button> <button class="btn sm" data-stact="edit" data-code="${esc(s.code)}">Edit</button> <button class="btn ghost sm danger" data-stact="del" data-code="${esc(s.code)}">Remove</button></td></tr>`}).join("")}</tbody></table>`:`<div class="empty"><b>No stores yet</b>Paste your store list above, then create a login for each store.</div>`;
+  $("#st-store-tbl").innerHTML=sts.length?`<table class="tbl static"><thead><tr><th>Code</th><th>Store</th><th>Area</th><th>Type</th><th>Brand</th><th>PIN</th><th class="r">Open tickets</th><th></th></tr></thead><tbody>${sts.map(s=>{const l=S.logins[s.code];return `<tr><td class="mono">${esc(s.code)}</td><td>${esc(s.name)}</td><td>${esc(s.area)}</td><td>${esc(s.type)}</td><td>${esc(s.brand||"")}</td><td>${l?(S.pins[s.code]?`<span class="mono" style="font-weight:600">${esc(S.pins[s.code].pin)}</span>`:`<span class="pill c-orange">PIN not saved</span>`):`<span class="pill c-gray">Not set up</span>`}</td><td class="r num">${Object.values(S.tickets).filter(t=>t.storeCode===s.code&&!CLOSED.has(t.status)).length}</td><td class="r" style="white-space:nowrap"><button class="btn sm" data-stact="login" data-code="${esc(s.code)}">${l?"Reset PIN":"Create login"}</button> <button class="btn sm" data-stact="edit" data-code="${esc(s.code)}">Edit</button> <button class="btn ghost sm danger" data-stact="del" data-code="${esc(s.code)}">Remove</button></td></tr>`}).join("")}</tbody></table>`:`<div class="empty"><b>No stores yet</b>Paste your store list above, then create a login for each store.</div>`;
   const ar=$("#tm-areas");const asig=areas().join("|");if(ar.dataset.sig!==asig){ar.dataset.sig=asig;ar.innerHTML=areas().map(a=>`<label><input type="checkbox" name="tm-ar" value="${esc(a)}">${esc(a)}</label>`).join("")}
   $("#tm-area-f").hidden=$("#tm-role").value!=="supervisor";
   const team=sortBy(Object.values(S.users).filter(u=>u.role!=="store"),u=>u.role+u.label);
@@ -1652,6 +1653,7 @@ async function makeStoreLogin(code){
   await S.B.set("users/"+uid,{role:"store",storeCode:code,areas:[],label:`${code} ${s.name}`,email,active:true,createdAt:iso()});
   if(prev&&prev.uid)try{await S.B.update("users/"+prev.uid,{active:false,role:"",disabledAt:iso()})}catch(e){}
   await S.B.set("storeLogins/"+code,{email,uid,version:n,createdAt:iso()});
+  try{await S.B.set("storePins/"+code,{pin,at:iso()})}catch(e){console.warn("pin not saved",e)}
   return pin;
 }
 function pinModal(list){
@@ -1724,8 +1726,10 @@ function bindStatic(){
     if(act==="export-pdf"){exportPdf().catch(x=>toast(x.message));return}
     if(act==="export-register"){const D={...rpData(),ts:sortBy(applyFilters(tickets(),S.tf),t=>t.createdAt)};exportXlsx([reportSheets(D).pop()],`Ticket-Register-${today()}.xlsx`).catch(x=>toast(x.message));return}
     if(act==="stores-add")return addStores();
-    if(act==="logins-bulk"){const miss=storeList().filter(s=>!S.logins[s.code]);if(!miss.length)return toast("Every store already has a login.");
-      return openModal("Create store logins",`<p style="margin:0">Creates logins and PINs for ${miss.length} store${miss.length>1?"s":""} without one: ${esc(miss.map(s=>s.code).join(", "))}.</p>`,async()=>{const out=[];for(const s of miss){$("#md-ok").textContent=`Creating ${out.length+1} of ${miss.length}…`;try{out.push({code:s.code,pin:await makeStoreLogin(s.code)})}catch(x){if(out.length)setTimeout(()=>pinModal(out),60);throw new Error(`Stopped at ${s.code}: ${authMsg(x)}`)}}setTimeout(()=>pinModal(out),60)},"Create logins")}
+    if(act==="logins-bulk"){const todo=storeList().filter(s=>!S.logins[s.code]||!S.pins[s.code]);if(!todo.length)return toast("Every store has a login and a saved PIN.");
+      const nNew=todo.filter(s=>!S.logins[s.code]).length,nReset=todo.length-nNew;
+      return openModal("Set up store logins",`<p style="margin:0">${nNew?`Creates logins for <b>${nNew}</b> store${nNew>1?"s":""} without one. `:""}${nReset?`Gives <b>${nReset}</b> store${nReset>1?"s":""} a new PIN because their current PIN wasn't saved; their old PIN stops working. `:""}PINs are saved here so you can see or download them later.</p><p class="muted" style="margin:0;font-size:12.5px">Firebase allows about 100 new logins per hour. If it stops partway, wait an hour and click this button again; it continues with the rest.</p>`,async()=>{const out=[];for(const s of todo){$("#md-ok").textContent=`Working ${out.length+1} of ${todo.length}…`;try{out.push({code:s.code,pin:await makeStoreLogin(s.code)})}catch(x){if(out.length)setTimeout(()=>pinModal(out),60);throw new Error(`Stopped at ${s.code} after ${out.length} done: ${authMsg(x)}. Wait an hour, then click the button again.`)}}setTimeout(()=>pinModal(out),60)},"Start")}
+    if(act==="pins-download"){const rows=storeList().filter(s=>S.pins[s.code]);if(!rows.length)return toast("No saved PINs yet.");exportXlsx([["Store PINs",[["Store code","Store","Area","Type","PIN","Website"],...rows.map(s=>[s.code,s.name,s.area,s.type,S.pins[s.code].pin,location.href.split("#")[0]])]]],`Store-PINs-${today()}.xlsx`).catch(e=>toast(e.message));return}
     if(act==="team-bulk"){const er=$("#tm-bulk-err");er.textContent="";const lines=$("#tm-bulk").value.split(/\n/).map(l=>l.trim()).filter(Boolean);
       if(!lines.length)return er.textContent="Paste at least one person.";
       const rows=[];for(const [i,l] of lines.entries()){const c=l.split(/\t|,/).map(x=>x.trim());if(c.length<3)return er.textContent=`Line ${i+1} needs a name, an email and a role.`;
