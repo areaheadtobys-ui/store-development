@@ -384,6 +384,11 @@ html,body{height:100%}
 body.modal-open{overflow:hidden}
 .trk .st>div{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:0}
 @media (max-width:640px){.trk .st>div{align-items:flex-start}}
+.actual{font-size:12px;margin-top:4px;padding:4px 8px;border-radius:6px;background:var(--green-bg);color:var(--fg);line-height:1.4}
+.actual .tag{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--green);margin-right:4px}
+.vi{grid-template-columns:auto minmax(0,1fr) auto}
+.vi .acts{flex-direction:column;align-items:stretch}
+@media (max-width:560px){.vi{grid-template-columns:auto minmax(0,1fr)}.vi .acts{grid-column:1/-1;flex-direction:row;flex-wrap:wrap}}
 
 </style>
 </head>
@@ -1170,12 +1175,20 @@ function renderPortal(){
   $("#pt-updates").innerHTML=ups.length?ups.map(n=>`<button class="ni" ${n.ticketNo?`data-open="${esc(n.ticketNo)}"`:""}>${esc(n.text)}<small>${ago(n.at)}</small></button>`).join(""):`<div class="empty">Updates from Store Development appear here.</div>`;
 }
 function kpi(l,v,h,c,key,on){return `<button class="kpi" style="--k:var(${c})" ${key!=null?`data-card="${key}" aria-pressed="${!!on}"`:"tabindex=-1"}><span class="l">${l}</span><span class="v">${v}</span>${h?`<span class="h">${h}</span>`:""}</button>`}
+const hhmm=iso=>{const d=new Date(iso);return pad(d.getHours())+":"+pad(d.getMinutes())};
+function durTxt(a,b){const m=Math.round((new Date(b)-new Date(a))/6e4);if(m<0)return"";const h=Math.floor(m/60);return h?`${h}h ${m%60}m`:`${m}m`}
+function actualLine(s){if(!s.actualStart)return"";const a=s.actualStart,b=s.actualEnd;const sameDay=!b||a.slice(0,10)===b.slice(0,10);
+  return `<div class="actual"><span class="tag">Actual</span> Started <b>${fDs(a)} ${fT(hhmm(a))}</b>${b?` · Finished <b>${sameDay?"":fDs(b)+" "}${fT(hhmm(b))}</b> · <b>${durTxt(a,b)}</b>`:` · <span style="color:var(--orange);font-weight:600">in progress</span>`}${s.actualStartByName?`<span class="faint"> · recorded by ${esc(s.actualEndByName||s.actualStartByName)}</span>`:""}</div>`}
+function timeBtns(s){const m=me();if(!m||s.status==="cancelled"||s.date>today())return"";if(!(m.role==="store"||isAdmin(m.role)))return"";
+  if(!s.actualStart)return `<button class="btn primary sm" data-sact="timein" data-sid="${s.id}">Repair started</button>`;
+  if(!s.actualEnd)return `<button class="btn primary sm" data-sact="timeout" data-sid="${s.id}">Repair finished</button>`;
+  return `<button class="btn ghost sm" data-sact="timeedit" data-sid="${s.id}">Edit times</button>`}
 function visitList(arr,acts){
   return arr.map(s=>{const d=parseYmd(s.date);const sl=slotOf(s.slot);return `<div class="vi ${s.status}"><div class="dt"><span>${MON[d.getMonth()]}</span><b>${d.getDate()}</b></div>
   <div style="min-width:0"><div><span class="pill c-${KIND_C[s.kind]||"gray"}">${esc(s.kind)}</span> ${s.status!=="confirmed"?`<span class="pill c-gray">${s.status==="done"?"Done":"Cancelled"}</span>`:""}</div>
   <div style="font-size:12.5px;margin-top:3px"><b>${esc(sl?sl.label:"")} ${fT(s.start)}${s.end?"–"+fT(s.end):""}</b> · ${esc(s.personnelName)}</div>
-  <div class="faint" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="#" data-open="${esc(s.ticketNo)}" class="mono">${esc(s.ticketNo)}</a> · ${esc(s.storeCode)} ${esc(s.activity||"")}</div></div>
-  <div class="acts">${acts&&s.status==="confirmed"?`<button class="btn sm" data-sact="done" data-sid="${s.id}">Done</button><button class="btn sm" data-sact="resched" data-sid="${s.id}">Move</button><button class="btn ghost sm" data-sact="cancel" data-sid="${s.id}">Cancel</button>`:""}</div></div>`}).join("");
+  <div class="faint" style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><a href="#" data-open="${esc(s.ticketNo)}" class="mono">${esc(s.ticketNo)}</a> · ${esc(s.storeCode)} ${esc(s.activity||"")}</div>${actualLine(s)}</div>
+  <div class="acts">${timeBtns(s)}${acts&&s.status==="confirmed"?`<button class="btn sm" data-sact="done" data-sid="${s.id}">Done</button><button class="btn sm" data-sact="resched" data-sid="${s.id}">Move</button><button class="btn ghost sm" data-sact="cancel" data-sid="${s.id}">Cancel</button>`:""}</div></div>`}).join("");
 }
 function holdItem(t,acts){const r=t.requested;const d=parseYmd(r.date);return `<div class="vi"><div class="dt" style="border:1px dashed var(--line-2);background:none"><span>${MON[d.getMonth()]}</span><b>${d.getDate()}</b></div>
   <div style="min-width:0"><div><span class="pill c-orange">Requested · awaiting confirmation</span></div><div style="font-size:12.5px;margin-top:3px"><b>${esc(slotLbl(r.slot))}</b></div>
@@ -1391,7 +1404,8 @@ let libP=null;
 function loadLibs(){if(libP)return libP;const add=src=>new Promise((res,rej)=>{const s=document.createElement("script");s.src=src;s.onload=res;s.onerror=()=>rej(new Error("Couldn't load the export tools. Check the internet connection."));document.head.appendChild(s)});
   libP=Promise.all([add("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"),add("https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js").then(()=>add("https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"))]).catch(e=>{libP=null;throw e});return libP}
 function reportSheets(D){
-  const reg=D.ts.map(t=>[t.no,t.storeCode,t.storeName,t.area,t.storeType,t.type,t.location,t.concern,t.priority,STATUS[t.status]?.[0]||t.status,fD(t.createdAt),t.assignedName||"",fD(t.completedAt),ageDays(t),isOverdue(t)?"Yes":"No"]);
+  const lastAct=no=>sortBy(Object.values(S.schedules).filter(x=>x.ticketNo===no&&x.actualStart),x=>x.actualStart,-1)[0];
+  const reg=D.ts.map(t=>{const v=lastAct(t.no);return [t.no,t.storeCode,t.storeName,t.area,t.storeType,t.type,t.location,t.concern,t.priority,STATUS[t.status]?.[0]||t.status,fD(t.createdAt),t.assignedName||"",fD(t.completedAt),ageDays(t),isOverdue(t)?"Yes":"No",v?fDT(v.actualStart):"",v&&v.actualEnd?fDT(v.actualEnd):"",v&&v.actualEnd?durTxt(v.actualStart,v.actualEnd):""]});
   const g=rows=>rows.map(x=>[x.k,x.total,x.open,x.completed,x.overdue,x.avgRes==null?"":+f1(x.avgRes)]);
   const H=["Total","Pending","Completed","Overdue","Avg resolution (days)"];
   return[
@@ -1401,7 +1415,7 @@ function reportSheets(D){
     ["Monthly",[["Month","Submitted","Completed","Still open","Cancelled / rejected"],...D.months.map(x=>[x.k,x.submitted,x.completed,x.open,x.cancelled])]],
     ["Personnel",[["Name","Type","Assigned","Completed","Open","Overdue","Visits","Visits done","Avg resolution (days)","Within target %"],...D.pers.map(x=>[x.k,x.kind,x.assigned,x.completed,x.open,x.overdue,x.visits,x.visitsDone,x.avgRes==null?"":+f1(x.avgRes),x.onTime??""])]],
     ["Overdue",[["Ticket","Store","Request","Priority","Status","Days open","Assigned"],...D.overdue.map(t=>[t.no,t.storeCode+" "+t.storeName,t.type,t.priority,STATUS[t.status][0],ageDays(t),t.assignedName||""])]],
-    ["Ticket register",[["Ticket","Store code","Store","Area","Store type","Request type","Location","Concern","Priority","Status","Submitted","Assigned","Completed","Days","Overdue"],...reg]]];
+    ["Ticket register",[["Ticket","Store code","Store","Area","Store type","Request type","Location","Concern","Priority","Status","Submitted","Assigned","Completed","Days","Overdue","Repair started","Repair finished","Time on site"],...reg]]];
 }
 function saveFile(name,blob){const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),4000);toast("Downloaded "+name)}
 async function exportXlsx(sheets,name){
@@ -1630,6 +1644,29 @@ function scheduleModal(o={}){
 }
 function schedAction(k,id){
   const s=S.schedules[id];if(!s)return;const t=S.tickets[s.ticketNo]||{no:s.ticketNo,storeCode:s.storeCode,area:s.area};
+  if(k==="timein"||k==="timeout"||k==="timeedit"){
+    const now=new Date();const nowD=ymd(now),nowT=pad(now.getHours())+":"+pad(now.getMinutes());
+    const f=(id,lbl,iso,def)=>`<div class="field"><label class="req" for="${id}-d">${lbl} date</label><input type="date" id="${id}-d" value="${iso?iso.slice(0,10):def[0]}" max="${nowD}"></div><div class="field"><label class="req" for="${id}-t">${lbl} time</label><input type="time" id="${id}-t" value="${iso?hhmm(iso):def[1]}"></div>`;
+    const showIn=k!=="timeout"||!s.actualStart,showOut=k!=="timein";
+    const startDef=[s.date<=nowD?(k==="timein"?nowD:s.date):s.date,k==="timein"?nowT:(s.start||"09:00")];
+    const body=`<p class="muted" style="margin:0">${esc(s.kind)} · ${fDw(s.date)} · ${esc(slotLbl(s.slot))} · ${esc(s.personnelName)}</p>
+      ${k==="timeout"&&s.actualStart?`<div class="banner" style="margin:0"><div>Repair started ${fDs(s.actualStart)} at <b>${fT(hhmm(s.actualStart))}</b>.</div></div>`:""}
+      <div class="fgrid">${showIn?f("md-in","Start",s.actualStart,startDef):""}${showOut?f("md-out","Finish",s.actualEnd,[nowD,nowT]):""}</div>
+      <div class="field"><label for="md-rem">Remarks (optional)</label><textarea id="md-rem" placeholder="${k==="timein"?"e.g. 2 technicians arrived":"e.g. Work done, area cleaned"}">${esc(k==="timeedit"?(s.actualNote||""):"")}</textarea></div>`;
+    const title=k==="timein"?"Record repair start":k==="timeout"?"Record repair finish":"Edit repair times";
+    return openModal(`${title} · ${s.ticketNo}`,body,async()=>{
+      const rd=id=>{const d=val(id+"-d"),tm=val(id+"-t");if(!d||!tm)throw new Error("Enter both the date and the time.");return new Date(d+"T"+tm).toISOString()};
+      const patch={};let a=s.actualStart,b=s.actualEnd;
+      if(showIn){a=rd("md-in");if(new Date(a)>new Date(Date.now()+5*6e4))throw new Error("The start time can't be in the future.");patch.actualStart=a;patch.actualStartBy=S.uid;patch.actualStartByName=myName()}
+      if(showOut){b=rd("md-out");if(new Date(b)>new Date(Date.now()+5*6e4))throw new Error("The finish time can't be in the future.");if(a&&new Date(b)<=new Date(a))throw new Error("The finish time must be after the start time.");patch.actualEnd=b;patch.actualEndBy=S.uid;patch.actualEndByName=myName()}
+      const r=val("md-rem");if(r)patch.actualNote=r;
+      await S.B.update("schedules/"+id,patch);
+      const who=me().role==="store"?s.storeCode:"Store Development";
+      const txt=k==="timein"?`Repair started at ${fT(hhmm(a))}`:k==="timeout"?`Repair finished at ${fT(hhmm(b))} (${durTxt(a,b)} on site)`:`Repair times updated: ${fT(hhmm(a))}${b?"–"+fT(hhmm(b)):""}`;
+      await addLog(s.ticketNo,{action:`${txt} · recorded by ${who}`,remarks:r});
+      await notify(t,`${s.ticketNo} · ${s.storeCode}: ${txt}`,me().role==="store"?["sd","area:"+t.area]:undefined);
+      toast(k==="timein"?"Start time recorded":k==="timeout"?"Finish time recorded":"Times updated")},k==="timein"?"Record start":k==="timeout"?"Record finish":"Save",false);
+  }
   if(k==="done")return openModal(`Visit done · ${s.ticketNo}`,`<p class="muted" style="margin:0">${esc(s.kind)} on ${fDw(s.date)} with ${esc(s.personnelName)}.</p>${remarksField(false,s.kind==="Initial Visit"?"Inspection findings. Upload the inspection report under Attachments.":"What was done")}`,async()=>{
     await S.B.update("schedules/"+id,{status:"done",doneAt:iso()});
     if(s.kind==="Initial Visit"&&S.tickets[s.ticketNo]&&!S.tickets[s.ticketNo].initialVisitAt)await S.B.update("tickets/"+s.ticketNo,{initialVisitAt:s.date,updatedAt:iso()});
