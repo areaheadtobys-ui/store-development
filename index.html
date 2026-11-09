@@ -1466,9 +1466,9 @@ function openTicket(no){
     if(staff)S.osub.push(S.B.watch({col:b+"/notes",orderBy:"at"},d=>{S.onotes=d;render()},()=>{}));
     S.osub.push(S.B.watch({col:b+"/log",orderBy:"at",dir:"desc"},d=>{S.olog=d;render()},()=>{}));
     S.osub.push(S.B.watch({col:b+"/files",orderBy:"at"},d=>{S.ofiles=d;render()},()=>{}));
-    $("#dr-compose").dataset.k="";$("#dr-upload").dataset.k="";
+    $("#dr-compose").dataset.k="";$("#dr-upload").dataset.k="";S._resetScroll=true;
   }
-  $("#drawer").hidden=false;$("#dr-scrim").hidden=false;
+  $("#drawer").hidden=false;$("#dr-scrim").hidden=false;if(S._resetScroll){S._resetScroll=false;$(".dr-body").scrollTop=0;requestAnimationFrame(()=>{$(".dr-body").scrollTop=0})}
   const aud=myAud();const unread=S.notifs.filter(n=>n.ticketNo===no&&!(n.readBy&&n.readBy[S.uid])&&n.aud?.some(a=>aud.includes(a))).map(n=>n.id);
   if(unread.length)markRead(unread);
   render();
@@ -1535,7 +1535,7 @@ function openFile(id){const f=S.ofiles.find(x=>x.id===id);if(!f)return;if(f.url)
 let mdHandler=null;
 function openModal(title,body,onOk,okLabel="Confirm",wide=false){
   $("#md-title").textContent=title;$("#md-body").innerHTML=body;$("#md-err").textContent="";$("#md-ok").textContent=okLabel;$("#md-ok").disabled=false;
-  $("#md-box").classList.toggle("wide",wide);$("#md-form .modal-f").hidden=!onOk;$("#modal").hidden=false;$("#md-scrim").hidden=false;document.body.classList.add("modal-open");$("#md-body").scrollTop=0;mdHandler=onOk;
+  $("#md-box").classList.toggle("wide",wide);$("#md-cancel").hidden=false;$("#md-form .modal-f").hidden=!onOk;$("#modal").hidden=false;$("#md-scrim").hidden=false;document.body.classList.add("modal-open");$("#md-body").scrollTop=0;mdHandler=onOk;
   setTimeout(()=>{const f=$("#md-body input:not([type=hidden]):not([type=checkbox]),#md-body select,#md-body textarea");f&&f.focus()},30);
 }
 function closeModal(){document.body.classList.remove("modal-open");$("#modal").hidden=true;$("#md-scrim").hidden=true;mdHandler=null}
