@@ -686,7 +686,7 @@ const KIND_C={"Initial Visit":"teal","Installation / Repair":"purple","Follow-up
 const FILE_CATS=["Photo of concern","Video","Supporting document","Quotation","Inspection report","Progress photo","Completion photo","Other"];
 const ROLES={store:"Store",supervisor:"Area supervisor",sdadmin:"Store Development admin",management:"Management"};
 const DEF_SLA={resolution:{Normal:14,Urgent:5,Critical:2},initial:{Normal:5,Urgent:2,Critical:1}};
-const DEF_SCHED={slots:[{id:"s1",label:"Before opening",start:"08:00",end:"10:00"},{id:"s2",label:"Morning",start:"10:00",end:"13:00"},{id:"s3",label:"Afternoon",start:"13:00",end:"17:00"},{id:"s4",label:"After closing",start:"21:00",end:"23:30"}],workdays:[1,2,3,4,5,6],capacity:0,blocked:[],windowDays:30,leadDays:1};
+const DEF_SCHED={slots:[{id:"s1",label:"Before opening",start:"08:00",end:"10:00"},{id:"s2",label:"Morning",start:"10:00",end:"13:00"},{id:"s3",label:"Afternoon",start:"13:00",end:"17:00"},{id:"s4",label:"After closing",start:"21:00",end:"23:30"}],workdays:[1,2,3,4,5,6],capacity:0,dailyCap:0,blocked:[],windowDays:30,leadDays:1};
 const DAY=864e5;
 const STORE_DOMAIN=CFG.storeEmailDomain||"stores.sd-ticketing.app";
 
@@ -833,8 +833,13 @@ const slotLbl=id=>{const s=slotOf(id);return s?`${s.label} · ${fT(s.start)}–$
 function capacity(){const c=+S.sched.capacity||0;return c>0?c:Math.max(1,people().length)}
 function dayOpen(date){const d=parseYmd(date);return (S.sched.workdays||[]).includes(d.getDay())&&!(S.sched.blocked||[]).includes(date)}
 const loadOf=(date,slot)=>(S.load[date+"_"+slot]?.count)||0;
-const slotLeft=(date,slot)=>Math.max(0,capacity()-loadOf(date,slot));
-function dayLeft(date){if(!dayOpen(date))return -1;return (S.sched.slots||[]).reduce((s,x)=>s+slotLeft(date,x.id),0)}
+const dailyCap=()=>Math.max(0,+S.sched.dailyCap||0);
+const dayCount=date=>(S.sched.slots||[]).reduce((s,x)=>s+loadOf(date,x.id),0);
+const dayRoom=date=>dailyCap()?Math.max(0,dailyCap()-dayCount(date)):Infinity;
+const slotLeft=(date,slot)=>Math.max(0,Math.min(capacity()-loadOf(date,slot),dayRoom(date)));
+function dayLeft(date){if(!dayOpen(date))return -1;const sum=(S.sched.slots||[]).reduce((s,x)=>s+Math.max(0,capacity()-loadOf(date,x.id)),0);return Math.min(sum,dayRoom(date))}
+function dayTotal(){const t=(S.sched.slots||[]).length*capacity();return dailyCap()?Math.min(t,dailyCap()):t}
+async function txDayCount(tx,date){let n=0;for(const x of (S.sched.slots||[])){const d=await tx.get(`slotLoad/${date}_${x.id}`);n+=(d&&d.count)||0}return n}
 function bookWindow(){const a=addDays(today(),Math.max(0,+S.sched.leadDays||0));const out=[];for(let i=0;i<(+S.sched.windowDays||30);i++)out.push(addDays(a,i));return out}
 function personBusy(pid,date,slot,exceptId){return Object.values(S.schedules).find(s=>s.personnelId===pid&&s.date===date&&s.slot===slot&&s.status!=="cancelled"&&s.id!==exceptId)}
 
@@ -870,6 +875,7 @@ async function createTicket(d,st,req){
     const c=await tx.get("counters/sd-"+y);
     const lk=req?`slotLoad/${req.date}_${req.slot}`:null;const l=lk?await tx.get(lk):null;
     if(req&&((l&&l.count)||0)>=cap){const e=new Error("That slot was just taken. Choose another slot.");e.code="slot-full";throw e}
+    if(req&&dailyCap()&&(await txDayCount(tx,req.date))>=dailyCap()){const e=new Error("That day just became fully booked. Choose another day.");e.code="slot-full";throw e}
     const n=((c&&c.n)||0)+1;const no=`SD-${y}-${String(n).padStart(4,"0")}`;const now=iso();
     tx.set("counters/sd-"+y,{n,year:y,at:now});
     if(lk)tx.set(lk,{date:req.date,slot:req.slot,count:((l&&l.count)||0)+1});
@@ -892,6 +898,7 @@ async function bookVisit(o){
     const hold=tk&&tk.requested&&tk.requested.held?tk.requested:null;
     const sameHold=hold&&hold.date===o.date&&hold.slot===o.slot;
     const hk=hold&&!sameHold?`slotLoad/${hold.date}_${hold.slot}`:null;const hl=hk?await tx.get(hk):null;
+    if(!sameHold&&!o.override&&dailyCap()){const n=await txDayCount(tx,o.date)-(hold&&hold.date===o.date?1:0);if(n>=dailyCap()){const e=new Error(`${fDw(o.date)} already has ${dailyCap()} store visit${dailyCap()>1?"s":""}, the daily limit. Pick another day, or tick "Book even if the day is full" for an emergency.`);e.code="busy";throw e}}
     if(pDoc&&pDoc.scheduleId){const x=S.schedules[pDoc.scheduleId];if(!x||x.status!=="cancelled"){const e=new Error(`${p.name} is already booked for ${fDs(o.date)}, ${slotLbl(o.slot)}. Pick another slot or person.`);e.code="busy";throw e}}
     tx.set(ps,{scheduleId:id,pid:o.pid,date:o.date,slot:o.slot});
     if(!sameHold)tx.set(lk,{date:o.date,slot:o.slot,count:((l&&l.count)||0)+1});
@@ -912,6 +919,7 @@ async function moveVisit(s,o){
   const nps=`personnelSlots/${o.pid}_${o.date}_${o.slot}`,ops=`personnelSlots/${s.personnelId}_${s.date}_${s.slot}`;
   const nlk=`slotLoad/${o.date}_${o.slot}`,olk=`slotLoad/${s.date}_${s.slot}`;const same=nlk===olk;const p=S.personnel[o.pid];
   await S.B.tx(async tx=>{const np=await tx.get(nps);const op=await tx.get(ops);const nl=await tx.get(nlk);const ol=same?nl:await tx.get(olk);
+    if(o.date!==s.date&&dailyCap()&&(await txDayCount(tx,o.date))>=dailyCap()){const e=new Error(`${fDw(o.date)} already has ${dailyCap()} store visits, the daily limit. Pick another day.`);e.code="busy";throw e}
     if(nps!==ops&&np&&np.scheduleId&&np.scheduleId!==s.id){const x=S.schedules[np.scheduleId];if(!x||x.status!=="cancelled"){const e=new Error(`${p.name} is already booked for that slot.`);e.code="busy";throw e}}
     if(nps!==ops){if(op&&op.scheduleId===s.id)tx.del(ops);tx.set(nps,{scheduleId:s.id,pid:o.pid,date:o.date,slot:o.slot})}
     if(!same){tx.set(nlk,{date:o.date,slot:o.slot,count:((nl&&nl.count)||0)+1});if(ol)tx.set(olk,{date:s.date,slot:s.slot,count:Math.max(0,(ol.count||0)-1)})}
@@ -1088,7 +1096,7 @@ function renderSlotPicker(px){
   if(F.date&&!days.includes(F.date))F.date=null;
   if(!F.date){F.date=days.find(d=>dayLeft(d)>0)||null}
   if(F.slot&&(!F.date||slotLeft(F.date,F.slot)<=0)&&!(F.slotHold))F.slot=null;
-  const per=slots.length*capacity();
+  const per=dayTotal();
   const chips=days.map(d=>{const left=dayLeft(d);const dd=parseYmd(d);const cls=left<0?"":left===0?"full":left<per?"part":"";
     return `<button type="button" class="dchip ${cls}" data-px="${px}" data-pday="${d}" aria-pressed="${F.date===d}" ${left<=0?"disabled":""}><span class="w">${WD[dd.getDay()]}</span><b>${dd.getDate()}</b><span class="w" style="font-size:9.5px">${MON[dd.getMonth()]}</span><span class="s">${left<0?"Closed":left===0?"Full":left+" open"}</span></button>`}).join("");
   const list=F.date?slots.map(s=>{const left=slotLeft(F.date,s.id);return `<button type="button" class="slot" data-px="${px}" data-pslot="${s.id}" aria-pressed="${F.slot===s.id}" ${left<=0?"disabled":""}><b>${esc(s.label)}</b><span>${fT(s.start)} – ${fT(s.end)}</span><span class="av">${left>0?left+" of "+capacity()+" available":"Fully booked"}</span></button>`}).join(""):"";
@@ -1255,7 +1263,7 @@ function renderAvail(){
   for(let i=0;i<42;i++){const dd=new Date(start.getFullYear(),start.getMonth(),start.getDate()+i);const k=ymd(dd);let cls="",tip="";
     if(!dayOpen(k)){cls="closed";tip="Closed"}
     else if(S.av.pid){const n=sc.filter(s=>s.date===k&&s.personnelId===S.av.pid).length;cls=n>=nS?"full":n?"part":"";tip=n?`${n} of ${nS} slots booked`:"Free"}
-    else{const left=dayLeft(k),tot=nS*capacity();cls=left===0?"full":left<tot?"part":"";tip=`${left} of ${tot} slot openings left`}
+    else{const left=dayLeft(k),tot=dayTotal();cls=left===0?"full":left<tot?"part":"";tip=`${left} of ${tot} store visit${tot>1?"s":""} left`}
     h+=`<button class="md ${dd.getMonth()!==mo?"out":""} ${k===today()?"today":""} ${cls}" data-day="${k}" title="${esc(tip)}">${dd.getDate()}</button>`}
   h+=`</div><div class="legend" style="margin-top:8px"><span><i style="background:var(--surface);border:1px solid var(--line-2)"></i>Open</span><span><i style="background:var(--orange-bg);border:1px solid var(--orange)"></i>Partly booked</span><span><i style="background:var(--red-bg);border:1px solid var(--red)"></i>Full</span><span class="faint">Struck out = closed</span></div>`;
   $("#av-cal").innerHTML=h;
@@ -1435,6 +1443,7 @@ function renderSettings(){
     <div class="fgrid" style="max-width:640px">
       <div class="field"><label for="sc-cap">Visits per slot</label><input type="number" min="0" id="sc-cap" value="${+sc.capacity||0}"><span class="hint">0 = number of active personnel (now ${people().length})</span></div>
       <div class="field"><label for="sc-lead">Earliest booking (days ahead)</label><input type="number" min="0" id="sc-lead" value="${+sc.leadDays||0}"></div>
+      <div class="field"><label for="sc-day">Store visits per day</label><input type="number" min="0" id="sc-day" value="${+sc.dailyCap||0}"><span class="hint">0 = no daily limit. Total stores that can be visited in one day.</span></div>
       <div class="field"><label for="sc-win">Booking window (days)</label><input type="number" min="1" max="90" id="sc-win" value="${+sc.windowDays||30}"></div>
       <div class="field"><label for="sc-block">Closed dates (holidays)</label><textarea id="sc-block" placeholder="2026-12-25&#10;2027-01-01" style="min-height:70px">${esc((sc.blocked||[]).join("\n"))}</textarea><span class="hint">One date per line, YYYY-MM-DD</span></div>
     </div>
@@ -1596,6 +1605,7 @@ function scheduleModal(o={}){
   <div class="field"><label class="req" for="md-date">Date</label><input type="date" id="md-date" value="${d0}" min="${today()}"></div>
   <div class="field full"><label class="req" for="md-slot">Time slot</label><select id="md-slot"></select></div>
   <div class="field full"><label class="req" for="md-pid">Personnel / contractor</label><span id="md-pidbox"></span><span class="hint">People already booked in this slot can't be selected.</span></div>
+  <div class="field full" id="md-ovf" hidden><label class="row" style="gap:6px;font-weight:500"><input type="checkbox" id="md-ov">Book even if the day is full (emergency)</label></div>
   <div class="field full"><label class="req" for="md-act">Purpose of the visit</label><input type="text" id="md-act" placeholder="e.g. Inspect aircon unit and prepare quotation" value="${o.confirm&&t0?esc("Initial inspection: "+t0.type.toLowerCase()):""}"></div></div>`,async()=>{
     const no=val("md-tk"),kind=val("md-kind"),date=val("md-date"),slot=val("md-slot"),pid=val("md-pid"),act=val("md-act");
     if(!no||!date||!slot||!pid||!act)throw new Error("Fill in the ticket, date, slot, person and purpose.");
@@ -1603,7 +1613,7 @@ function scheduleModal(o={}){
     const t=S.tickets[no],p=S.personnel[pid];
     if(personBusy(pid,date,slot))throw new Error(`${p.name} is already booked in that slot. Pick another slot or person.`);
     $("#md-ok").textContent="Booking…";
-    await bookVisit({ticketNo:no,pid,date,slot,kind,activity:act});
+    await bookVisit({ticketNo:no,pid,date,slot,kind,activity:act,override:!!($("#md-ov")&&$("#md-ov").checked)});
     const when=`${fDw(date)}, ${slotLbl(slot)}`;
     const moved=held(t)&&!(t.requested.date===date&&t.requested.slot===slot);
     const extra=t.assignedId?{}:{assignedId:pid,assignedName:p.name};
@@ -1613,7 +1623,7 @@ function scheduleModal(o={}){
     else{if(Object.keys(extra).length)await S.B.update("tickets/"+no,{...extra,updatedAt:iso()});await addLog(no,{action:`${kind} scheduled`,remarks:`${when} · ${p.name} · ${act}`});await notify(t,txt)}
     toast("Visit booked");
   },o.confirm?"Confirm visit":"Book visit");
-  const draw=()=>{const dt=val("md-date");const cur=$("#md-slot").value||s0;$("#md-slot").innerHTML=slotOptions(dt,cur);const sl=$("#md-slot").value;const curP=$("#md-pid")?.value||o.pid||(t0&&t0.assignedId)||"";$("#md-pidbox").innerHTML=personSelect(curP,dt,sl);
+  const draw=()=>{const dt=val("md-date");const cur=$("#md-slot").value||s0;$("#md-ovf").hidden=!dailyCap();$("#md-slot").innerHTML=slotOptions(dt,cur);const sl=$("#md-slot").value;const curP=$("#md-pid")?.value||o.pid||(t0&&t0.assignedId)||"";$("#md-pidbox").innerHTML=personSelect(curP,dt,sl);
     const tk=S.tickets[val("md-tk")];$("#md-pref").textContent=tk&&held(tk)?`Store requested ${fDw(tk.requested.date)}, ${slotLbl(tk.requested.slot)}.`:"";};
   $("#md-date").onchange=draw;$("#md-tk").onchange=draw;$("#md-slot").onchange=()=>{const dt=val("md-date");$("#md-pidbox").innerHTML=personSelect($("#md-pid")?.value||"",dt,$("#md-slot").value)};
   $("#md-slot").innerHTML=slotOptions(d0,s0);draw();
@@ -1758,7 +1768,7 @@ function bindStatic(){
       if(slots.some(s=>!s.label||!s.start||!s.end||s.end<=s.start))return er.textContent="Each slot needs a name, and an end time after its start time.";
       const blocked=$("#sc-block").value.split(/\s+/).filter(Boolean);if(blocked.some(d=>!/^\d{4}-\d{2}-\d{2}$/.test(d)))return er.textContent="Write closed dates as YYYY-MM-DD.";
       const wd=$$("input[name=sc-wd]:checked").map(i=>+i.value);if(!wd.length)return er.textContent="Choose at least one working day.";
-      S.B.set("config/schedule",{slots,workdays:wd,capacity:Math.max(0,parseInt($("#sc-cap").value,10)||0),leadDays:Math.max(0,parseInt($("#sc-lead").value,10)||0),windowDays:Math.min(90,Math.max(1,parseInt($("#sc-win").value,10)||30)),blocked,updatedAt:iso()}).then(()=>toast("Slot settings saved")).catch(x=>er.textContent=authMsg(x));return}
+      S.B.set("config/schedule",{slots,workdays:wd,capacity:Math.max(0,parseInt($("#sc-cap").value,10)||0),dailyCap:Math.max(0,parseInt($("#sc-day").value,10)||0),leadDays:Math.max(0,parseInt($("#sc-lead").value,10)||0),windowDays:Math.min(90,Math.max(1,parseInt($("#sc-win").value,10)||30)),blocked,updatedAt:iso()}).then(()=>toast("Slot settings saved")).catch(x=>er.textContent=authMsg(x));return}
     if(act==="sla-save"){const n=id=>Math.max(0,parseInt($("#"+id).value,10)||0);const sla={initial:{},resolution:{}};PRIOS.forEach(p=>{sla.initial[p]=n("sla-i-"+p);sla.resolution[p]=Math.max(1,n("sla-r-"+p))});S.B.set("config/sla",{...sla,updatedAt:iso()}).then(()=>toast("Targets saved")).catch(x=>toast(authMsg(x)));return}
     if(act==="notif-readall"){const aud=myAud();markRead(S.notifs.filter(n=>n.aud?.some(x=>aud.includes(x))&&!(n.readBy&&n.readBy[S.uid])).slice(0,60).map(n=>n.id));return}
   });
